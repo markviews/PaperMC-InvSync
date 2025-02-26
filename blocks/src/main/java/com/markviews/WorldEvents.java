@@ -45,7 +45,7 @@ public class WorldEvents implements Listener {
     // dict to store tool durability when player starts using tool
     private Map<Player, Short> toolDurability = new HashMap<>();
 
-    private int health = 20;
+    private double health = 20;
     private int food = 20;
     private float exp = 0;
     private int expLevel = 0;
@@ -54,6 +54,7 @@ public class WorldEvents implements Listener {
 
     public void Setup() {
         sharedInv = Bukkit.createInventory(null, InventoryType.PLAYER);
+        spawnLocation = Bukkit.getWorlds().get(0).getSpawnLocation();
 
         // set gamerules
         for (World world : Main.plugin.getServer().getWorlds()) {
@@ -209,7 +210,9 @@ public class WorldEvents implements Listener {
         if (!Main.plugin.syncHealth) return;
         if (!(event.getEntity() instanceof Player)) return;
         Player player = (Player) event.getEntity();
-        int damage = (int) event.getDamage();
+        double damage = event.getDamage();
+        if (damage == 0) return;
+
         DamageCause cause = event.getCause();
         if (cause == DamageCause.CUSTOM) return;
         health = Math.max(health - damage, 0);
@@ -244,7 +247,7 @@ public class WorldEvents implements Listener {
         if (!Main.plugin.syncHealth) return;
         if (!(event.getEntity() instanceof Player)) return;
         Player player = (Player) event.getEntity();
-        int amount = (int) event.getAmount();
+        double amount = event.getAmount();
         health = Math.max(health + amount, 20);
 
         Broadcast(Main.plugin.log_health, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " gained " + ChatColor.GOLD + amount + ChatColor.GRAY + " health");
