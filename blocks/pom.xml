@@ -1,0 +1,89 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.markviews</groupId>
+    <artifactId>blocks</artifactId>
+    <version>1.0</version>
+    <packaging>jar</packaging>
+
+    <name>blocks</name>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+  
+    <!-- The Bukkit Maven Repository -->
+    <repositories>
+    <repository>
+        <id>papermc-repo</id>
+        <url>https://repo.papermc.io/repository/maven-public/</url>
+    </repository>
+    <repository>
+    <id>dmulloy2-repo</id>
+    <url>https://repo.dmulloy2.net/repository/public/</url>
+  </repository>
+</repositories>
+
+    <dependencies>
+    
+        <dependency>
+    <groupId>org.spigotmc</groupId>
+    <artifactId>spigot-api</artifactId>
+    <version>1.21.1-R0.1-SNAPSHOT</version>
+    <scope>provided</scope>
+</dependency>
+
+<dependency>
+    <groupId>com.comphenix.protocol</groupId>
+    <artifactId>ProtocolLib</artifactId>
+    <version>5.3.0</version>
+  </dependency>
+
+    </dependencies>
+    <build>
+    <plugins>
+        <!-- Plugin to run external commands -->
+        <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <version>3.0.0</version>
+            <executions>
+
+                <!-- Move the plugin JAR to the server's plugins folder -->
+                <execution>
+                    <id>move-jar</id>
+                    <phase>package</phase>
+                    <goals>
+                        <goal>exec</goal>
+                    </goals>
+                    <configuration>
+                        <executable>cmd.exe</executable>
+                        <arguments>
+                            <argument>/c</argument>
+                            <argument>move /Y target\blocks-1.0.jar C:\Users\Mark\Desktop\server\plugins\</argument> <!-- Move plugin JAR to plugins folder -->
+                        </arguments>
+                    </configuration>
+                </execution>
+
+                <!-- Start the Minecraft server -->
+                <execution>
+                    <id>start-server</id>
+                    <phase>package</phase>
+                    <goals>
+                        <goal>exec</goal>
+                    </goals>
+                    <configuration>
+                        <executable>cmd.exe</executable>
+                        <arguments>
+                            <argument>/c</argument>
+                            <argument>start C:\Users\Mark\Desktop\server\start.bat</argument> <!-- Start the server using the batch file -->
+                        </arguments>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+</build>
+
+</project>
