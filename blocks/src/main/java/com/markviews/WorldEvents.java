@@ -11,13 +11,26 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.event.entity.EntityInteractEvent;
+import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.EntityPotionEffectEvent.Cause;
+import org.bukkit.event.hanging.HangingPlaceEvent;
 import org.bukkit.event.entity.EntityPotionEffectEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerEggThrowEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
@@ -69,11 +82,7 @@ public class WorldEvents implements Listener {
                 Player leastAir = null;
 
                 for (Player player : sharedInvUsers) {
-
-                    if (Main.plugin.syncInventory) {
-                        CheckInvDiff(player);
-                    }
-
+                    
                     if (Main.plugin.syncHealth && (leastAir == null || player.getRemainingAir() < leastAir.getRemainingAir())) {
                         leastAir = player;
                     }
@@ -124,6 +133,7 @@ public class WorldEvents implements Listener {
                             short durability_new = (short) Math.max(durability_current, durability_prev + 1);
                             sharedItem.setDurability(durability_new);
                             sharedInv.setItem(slot, sharedItem);
+                            toolDurability.remove(player);
                         }
 
                     }
@@ -147,35 +157,6 @@ public class WorldEvents implements Listener {
                 if (otherPlayer.equals(player)) continue;
                 otherPlayer.setExp(exp);
                 otherPlayer.setLevel(expLevel);
-            }
-
-        }
-    }
-
-    // check if player's inventory changed and update shared inventory
-    public void CheckInvDiff(Player player) {
-        Inventory inv = player.getInventory();
-        for (int slot = 0; slot < 41; slot++) {
-
-            ItemStack item = inv.getItem(slot);
-            ItemStack sharedItem = sharedInv.getItem(slot);
-            if (!Objects.equals(item, sharedItem)) {
-
-                sharedInv.setItem(slot, item);
-
-                // load slot for all other players
-                for (Player otherPlayer : sharedInvUsers) {
-                    if (otherPlayer.equals(player)) continue;
-
-                    // if this player is using the slot, don't update it
-                    boolean isUsingTool = (player.getInventory().getHeldItemSlot() == slot)
-                            && toolDurability.containsKey(player);
-                    // boolean isUsingTool = (otherPlayer.getInventory().getHeldItemSlot() == slot);
-                    if (isUsingTool) continue;
-
-                    otherPlayer.getInventory().setItem(slot, item);
-                }
-
             }
 
         }
@@ -220,6 +201,9 @@ public class WorldEvents implements Listener {
         Broadcast(Main.plugin.log_health, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " took " + ChatColor.GOLD + damage + ChatColor.GRAY + " damage from " + ChatColor.GOLD + cause);
 
         SyncHealth();
+
+        // sync inv after damage to update armor
+        Bukkit.getScheduler().runTask(Main.plugin, () -> SyncInv(player));
     }
 
     @EventHandler
@@ -317,10 +301,13 @@ public class WorldEvents implements Listener {
         PotionEffect oldEffect = event.getOldEffect();
 
         if (newEffect != null) {
-            Broadcast(Main.plugin.log_potion, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " added effect " + ChatColor.GOLD + newEffect.getType().getKey() + ChatColor.GRAY + " for " + ChatColor.GOLD + newEffect.getDuration());
+            String effectName = newEffect.getType().getKey().toString().replace("minecraft:", "");
+            int seconds = newEffect.getDuration() / 20;
+            Broadcast(Main.plugin.log_potion, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " added effect " + ChatColor.GOLD + effectName + ChatColor.GRAY + " for " + ChatColor.GOLD + seconds + ChatColor.GRAY + " seconds");
         }
         if (oldEffect != null) {
-            Broadcast(Main.plugin.log_potion, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " removed effect " + ChatColor.GOLD + oldEffect.getType().getKey());
+            String effectName = oldEffect.getType().getKey().toString().replace("minecraft:", "");
+            Broadcast(Main.plugin.log_potion, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " removed effect " + ChatColor.GOLD + effectName);
         }
 
         for (Player otherPlayer : sharedInvUsers) {
@@ -355,6 +342,117 @@ public class WorldEvents implements Listener {
 
     private int clamp(int val, int min, int max) {
         return Math.max(min, Math.min(max, val));
+    }
+
+    //# Inv sync events
+
+    @EventHandler
+    public void pickup(EntityPickupItemEvent event) {
+        if (!(event.getEntity() instanceof Player)) return;
+        Player player = (Player) event.getEntity();
+        ItemStack item = event.getItem().getItemStack();
+        AddToAllExcept(item, player);
+    }
+
+    @EventHandler
+    public void drop(PlayerDropItemEvent event) {
+        Player player = event.getPlayer();
+        ItemStack item = event.getItemDrop().getItemStack();
+        RemoveFromAllExcept(item, player);
+    }
+
+    @EventHandler
+    public void click(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player)) return;
+        if (event.getClickedInventory() == null) return;
+        Player player = (Player) event.getWhoClicked();
+        Bukkit.getScheduler().runTask(Main.plugin, () -> SyncInv(player));
+    }
+
+    @EventHandler
+    public void drag(InventoryDragEvent event) {
+        if (!(event.getWhoClicked() instanceof Player)) return;
+        Player player = (Player) event.getWhoClicked();
+        Bukkit.getScheduler().runTask(Main.plugin, () -> SyncInv(player));
+    }
+
+    @EventHandler
+    public void close(InventoryCloseEvent event) {
+        if (!(event.getPlayer() instanceof Player)) return;
+        Player player = (Player) event.getPlayer();
+        Bukkit.getScheduler().runTask(Main.plugin, () -> SyncInv(player));
+    }
+
+    @EventHandler
+    public void consume(PlayerItemConsumeEvent  event) {
+        Player player = event.getPlayer();
+        ItemStack item = event.getItem();
+        RemoveFromAllExcept(item, player);
+    }
+
+    @EventHandler
+    public void placeBlock(BlockPlaceEvent event) {
+        Player player = event.getPlayer();
+        ItemStack item = event.getItemInHand().clone();
+        item.setAmount(1);
+        RemoveFromAllExcept(item, player);
+    }
+
+    @EventHandler
+    public void breakBlock(BlockBreakEvent event) {
+        Player player = event.getPlayer();
+        ItemStack item = event.getPlayer().getInventory().getItemInMainHand();
+        if (item == null) return;
+
+        int slot = player.getInventory().getHeldItemSlot();
+        SyncSlot(slot, player);
+    }
+
+    @EventHandler
+    public void interact(PlayerInteractEvent event) {
+        Player player = event.getPlayer();
+        int slot = player.getInventory().getHeldItemSlot();
+        Bukkit.getScheduler().runTask(Main.plugin, () -> SyncSlot(slot, player));
+    }
+
+    private void AddToAllExcept(ItemStack item, Player except) {
+        sharedInv.addItem(item);
+        for (Player player : sharedInvUsers) {
+            if (player.equals(except)) continue;
+            player.getInventory().addItem(item);
+        }
+    }
+
+    private void RemoveFromAllExcept(ItemStack item, Player except) {
+        sharedInv.removeItem(item);
+        for (Player player : sharedInvUsers) {
+            if (player.equals(except)) continue;
+            player.getInventory().removeItem(item);
+        }
+    }
+
+    private void SyncInv(Player player) {
+        for (int slot = 0; slot < 41; slot++) {
+            ItemStack item = player.getInventory().getItem(slot);
+            ItemStack sharedItem = sharedInv.getItem(slot);
+            if (!Objects.equals(item, sharedItem)) {
+                SyncSlot(slot, player);
+            }
+        }
+    }
+
+    private void SyncSlot(int slot, Player from) {
+        ItemStack item = from.getInventory().getItem(slot);
+        sharedInv.setItem(slot, item);
+        for (Player player : sharedInvUsers) {
+            if (player.equals(from)) continue;
+
+            // if this player is using the slot, don't update it
+            boolean isUsingTool = player.getInventory().getHeldItemSlot() == slot && toolDurability.containsKey(player);
+            if (isUsingTool) continue;
+
+            player.getInventory().setItem(slot, item);
+        }
     }
 
 }
