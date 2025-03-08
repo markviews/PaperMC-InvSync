@@ -11,6 +11,7 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
@@ -71,34 +72,6 @@ public class WorldEvents implements Listener {
         for (World world : Main.plugin.getServer().getWorlds()) {
             world.setGameRule(GameRule.KEEP_INVENTORY, true);
         }
-        
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                Player leastAir = null;
-
-                for (Player player : sharedInvUsers) {
-                    
-                    if (Main.plugin.syncHealth && (leastAir == null || player.getRemainingAir() < leastAir.getRemainingAir())) {
-                        leastAir = player;
-                    }
-
-                    if (Main.plugin.syncExp) {
-                        CheckEXPDiff(player);
-                    }
-
-                }
-
-                if (Main.plugin.syncHealth) {
-                    // sync air levels
-                    for (Player player : sharedInvUsers) {
-                        if (player == leastAir) continue;
-                        player.setRemainingAir(leastAir.getRemainingAir());
-                    }
-                }
-
-            }
-        }.runTaskTimer(Main.plugin, 0, 1);
 
         Main.plugin.protocolManager.addPacketListener(
                 new PacketAdapter(Main.plugin, ListenerPriority.NORMAL, PacketType.Play.Client.BLOCK_DIG) {
@@ -124,11 +97,6 @@ public class WorldEvents implements Listener {
                         } else if (digType == EnumWrappers.PlayerDigType.ABORT_DESTROY_BLOCK) {
                             toolDurability.remove(player);
                         } else if (digType == EnumWrappers.PlayerDigType.STOP_DESTROY_BLOCK) {
-                            short durability_prev = toolDurability.getOrDefault(player, (short) 0);
-                            short durability_current = sharedItem.getDurability();
-                            short durability_new = (short) Math.max(durability_current, durability_prev + 1);
-                            sharedItem.setDurability(durability_new);
-                            sharedInv.setItem(slot, sharedItem);
                             toolDurability.remove(player);
                         }
 
@@ -437,6 +405,7 @@ public class WorldEvents implements Listener {
         RemoveFromAllExcept(item, player);
     }
 
+    @SuppressWarnings("deprecation")
     @EventHandler
     public void breakBlock(BlockBreakEvent event) {
         Player player = event.getPlayer();
@@ -444,6 +413,17 @@ public class WorldEvents implements Listener {
         if (item == null) return;
 
         int slot = player.getInventory().getHeldItemSlot();
+
+        // if this item has durability, make sure we're syncing it correctly
+        short maxDurability = item.getType().getMaxDurability();
+        if (maxDurability != 0) {
+            short durability_local = item.getDurability();
+            short durability_shared = sharedInv.getItem(slot).getDurability();
+            short durability_new = (short) Math.max(durability_shared + 1, durability_local);
+            item.setDurability(durability_new);
+            player.getInventory().setItem(slot, item);
+        }
+
         SyncSlot(slot, player);
     }
 
@@ -451,6 +431,11 @@ public class WorldEvents implements Listener {
     public void interact(PlayerInteractEvent event) {
         Player player = event.getPlayer();
         int slot = player.getInventory().getHeldItemSlot();
+
+        // if breaking block, don't sync.. we'll do that in the breakBlock event
+        Action action = event.getAction();
+        if (action == Action.LEFT_CLICK_BLOCK) return;
+
         Bukkit.getScheduler().runTask(Main.plugin, () -> SyncSlot(slot, player));
     }
 
