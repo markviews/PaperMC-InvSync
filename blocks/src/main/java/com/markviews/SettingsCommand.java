@@ -33,8 +33,6 @@ public class SettingsCommand implements CommandExecutor {
             for(World world : Main.plugin.getServer().getWorlds()) {
                 sender.sendMessage(ChatColor.GRAY + "Important gamerules: " + world.getName());
                 sender.sendMessage(ChatColor.GRAY + "KEEP_INVENTORY: " + (world.getGameRuleValue(GameRule.KEEP_INVENTORY) ? ChatColor.GREEN + "enabled" : ChatColor.RED + "disabled") + ChatColor.GRAY + " (Recommended enabled)");
-                sender.sendMessage(ChatColor.GRAY + "DO_IMMEDIATE_RESPAWN: " + (world.getGameRuleValue(GameRule.DO_IMMEDIATE_RESPAWN) ? ChatColor.GREEN + "enabled" : ChatColor.RED + "disabled") + ChatColor.GRAY + " (Recommended enabled)");
-                sender.sendMessage(ChatColor.GRAY + "NATURAL_REGENERATION: " + (world.getGameRuleValue(GameRule.NATURAL_REGENERATION) ? ChatColor.GREEN + "enabled" : ChatColor.RED + "disabled") + ChatColor.GRAY + " (Recommended disabled)");
             }
 
             return true;

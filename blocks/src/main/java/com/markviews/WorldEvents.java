@@ -16,19 +16,17 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityRegainHealthEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
-import org.bukkit.event.entity.ProjectileLaunchEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
-import org.bukkit.event.entity.EntityInteractEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.EntityPotionEffectEvent.Cause;
-import org.bukkit.event.hanging.HangingPlaceEvent;
+import org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason;
 import org.bukkit.event.entity.EntityPotionEffectEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerDropItemEvent;
-import org.bukkit.event.player.PlayerEggThrowEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
@@ -72,8 +70,6 @@ public class WorldEvents implements Listener {
         // set gamerules
         for (World world : Main.plugin.getServer().getWorlds()) {
             world.setGameRule(GameRule.KEEP_INVENTORY, true);
-            world.setGameRule(GameRule.DO_IMMEDIATE_RESPAWN, true);
-            world.setGameRule(GameRule.NATURAL_REGENERATION, false);
         }
         
         new BukkitRunnable() {
@@ -169,6 +165,10 @@ public class WorldEvents implements Listener {
             @Override
             public void run() {
                 for (Player player : sharedInvUsers) {
+
+                    // skip player currently in the death screen
+                    if (player.getHealth() == 0) continue;
+
                     if (Main.plugin.syncHealth) {
                         double change = health - player.getHealth();
                         if (change > 0) {
@@ -196,6 +196,7 @@ public class WorldEvents implements Listener {
 
         DamageCause cause = event.getCause();
         if (cause == DamageCause.CUSTOM) return;
+
         health = Math.max(health - damage, 0);
 
         Broadcast(Main.plugin.log_health, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " took " + ChatColor.GOLD + damage + ChatColor.GRAY + " damage from " + ChatColor.GOLD + cause);
@@ -216,6 +217,12 @@ public class WorldEvents implements Listener {
         int change = newFoodLevel - oldFoodLevel;
         food = clamp(food + change, 0, 20);
 
+        // share this player's saturation with others
+        float saturation = player.getSaturation();
+        for (Player otherPlayer : sharedInvUsers) {
+            otherPlayer.setSaturation(saturation);
+        }
+
         if (event.getItem() != null) {
             String cause = event.getItem().getType().name();
             Broadcast(Main.plugin.log_food, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " changed food level by " + ChatColor.GOLD + change + ChatColor.GRAY + " using " + ChatColor.GOLD + cause);
@@ -231,24 +238,55 @@ public class WorldEvents implements Listener {
         if (!Main.plugin.syncHealth) return;
         if (!(event.getEntity() instanceof Player)) return;
         Player player = (Player) event.getEntity();
+        
+        // only accept auto regen from first player
+        RegainReason reason = event.getRegainReason();
+        boolean isAutoRegen = reason == RegainReason.MAGIC_REGEN || reason == RegainReason.REGEN || reason == RegainReason.SATIATED;
+        if (isAutoRegen && sharedInvUsers.size() != 0 && sharedInvUsers.get(0) != player) {
+            return;
+        }
+
         double amount = event.getAmount();
-        health = Math.max(health + amount, 20);
+        health = Math.min(health + amount, 20);
 
-        Broadcast(Main.plugin.log_health, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " gained " + ChatColor.GOLD + amount + ChatColor.GRAY + " health");
-
+        if (isAutoRegen) {
+            // Broadcast(Main.plugin.log_health, ChatColor.GRAY + "Auto regen " + ChatColor.GOLD + amount + ChatColor.GRAY + " health");
+        } else {
+            Broadcast(Main.plugin.log_health, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " gained " + ChatColor.GOLD + amount + ChatColor.GRAY + " health");
+        }
+        
         SyncHealth();
+    }
+
+    @EventHandler
+    public void death(PlayerDeathEvent event) {
+        if (!Main.plugin.syncHealth) return;
+        health = 20;
+
+        DamageCause cause = event.getEntity().getLastDamageCause().getCause();
+        if (cause == DamageCause.CUSTOM) return;
+
+        // kill all other players
+        for (Player player : sharedInvUsers) {
+
+            // skip player who died
+            if (player.equals(event.getEntity())) continue;
+
+            // skip player currently in the death screen
+            if (player.getHealth() == 0) continue;
+
+            player.setHealth(0);
+        }
     }
 
     @EventHandler
     public void respawn(PlayerRespawnEvent event) {
         if (!Main.plugin.syncHealth) return;
-        health = 20; // this feels kinda cheap.. maybe handle this better
         SyncHealth();
 
         if (Main.plugin.syncSpawn && spawnLocation != null) {
             event.setRespawnLocation(spawnLocation);
         }
-
     }
 
     @EventHandler
@@ -268,6 +306,7 @@ public class WorldEvents implements Listener {
             // first player. reset some values
             player.setHealth(20);
             player.setFoodLevel(20);
+            player.setSaturation(20);
             player.setExp(0);
             player.setLevel(0);
         }
