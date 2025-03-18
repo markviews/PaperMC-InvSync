@@ -34,6 +34,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerSpawnChangeEvent;
+import org.bukkit.event.world.WorldSaveEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
@@ -73,35 +74,34 @@ public class WorldEvents implements Listener {
             world.setGameRule(GameRule.KEEP_INVENTORY, true);
         }
 
-        Main.plugin.protocolManager.addPacketListener(
-                new PacketAdapter(Main.plugin, ListenerPriority.NORMAL, PacketType.Play.Client.BLOCK_DIG) {
-                    @SuppressWarnings("deprecation")
-                    @Override
-                    public void onPacketReceiving(PacketEvent event) {
-                        if (!Main.plugin.syncInventory) return;
+        Main.plugin.protocolManager.addPacketListener(new PacketAdapter(Main.plugin, ListenerPriority.NORMAL, PacketType.Play.Client.BLOCK_DIG) {
+            @SuppressWarnings("deprecation")
+            @Override
+            public void onPacketReceiving(PacketEvent event) {
+                if (!Main.plugin.syncInventory) return;
 
-                        PacketContainer packet = event.getPacket();
-                        EnumWrappers.PlayerDigType digType = packet.getPlayerDigTypes().getValues().get(0);
+                PacketContainer packet = event.getPacket();
+                EnumWrappers.PlayerDigType digType = packet.getPlayerDigTypes().getValues().get(0);
 
-                        Player player = event.getPlayer();
-                        int slot = player.getInventory().getHeldItemSlot();
+                Player player = event.getPlayer();
+                int slot = player.getInventory().getHeldItemSlot();
 
-                        ItemStack sharedItem = sharedInv.getItem(slot);
-                        if (sharedItem == null) return;
+                ItemStack sharedItem = sharedInv.getItem(slot);
+                if (sharedItem == null) return;
 
-                        short maxDurability = sharedItem.getType().getMaxDurability();
-                        if (maxDurability == 0) return;
+                short maxDurability = sharedItem.getType().getMaxDurability();
+                if (maxDurability == 0) return;
 
-                        if (digType == EnumWrappers.PlayerDigType.START_DESTROY_BLOCK) {
-                            toolDurability.put(player, sharedItem.getDurability());
-                        } else if (digType == EnumWrappers.PlayerDigType.ABORT_DESTROY_BLOCK) {
-                            toolDurability.remove(player);
-                        } else if (digType == EnumWrappers.PlayerDigType.STOP_DESTROY_BLOCK) {
-                            toolDurability.remove(player);
-                        }
+                if (digType == EnumWrappers.PlayerDigType.START_DESTROY_BLOCK) {
+                    toolDurability.put(player, sharedItem.getDurability());
+                } else if (digType == EnumWrappers.PlayerDigType.ABORT_DESTROY_BLOCK) {
+                    toolDurability.remove(player);
+                } else if (digType == EnumWrappers.PlayerDigType.STOP_DESTROY_BLOCK) {
+                    toolDurability.remove(player);
+                }
 
-                    }
-                });
+            }
+        });
 
     }
 
@@ -165,6 +165,13 @@ public class WorldEvents implements Listener {
         DamageCause cause = event.getCause();
         if (cause == DamageCause.CUSTOM) return;
 
+        // only accept potion damage from first player
+        boolean isPotionEffect = cause == DamageCause.MAGIC || cause == DamageCause.POISON;
+        if (isPotionEffect && sharedInvUsers.size() != 0 && sharedInvUsers.get(0) != player) {
+            event.setCancelled(true);
+            return;
+        }
+
         health = Math.max(health - damage, 0);
 
         Broadcast(Main.plugin.log_health, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " took " + ChatColor.GOLD + damage + ChatColor.GRAY + " damage from " + ChatColor.GOLD + cause);
@@ -188,6 +195,7 @@ public class WorldEvents implements Listener {
         // share this player's saturation with others
         float saturation = player.getSaturation();
         for (Player otherPlayer : sharedInvUsers) {
+            if (otherPlayer.equals(player)) continue;
             otherPlayer.setSaturation(saturation);
         }
 
@@ -211,6 +219,7 @@ public class WorldEvents implements Listener {
         RegainReason reason = event.getRegainReason();
         boolean isAutoRegen = reason == RegainReason.MAGIC_REGEN || reason == RegainReason.REGEN || reason == RegainReason.SATIATED;
         if (isAutoRegen && sharedInvUsers.size() != 0 && sharedInvUsers.get(0) != player) {
+            event.setCancelled(true);
             return;
         }
 
@@ -261,6 +270,7 @@ public class WorldEvents implements Listener {
     public void join(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         Inventory inv = player.getInventory();
+        float saturation = 20;
 
         // if there's someone else already using the shared inventory, sync with them
         if (sharedInvUsers.size() != 0) {
@@ -270,14 +280,15 @@ public class WorldEvents implements Listener {
                     player.addPotionEffect(effect);
                 }
             }
-        } else {
-            // first player. reset some values
-            player.setHealth(20);
-            player.setFoodLevel(20);
-            player.setSaturation(20);
-            player.setExp(0);
-            player.setLevel(0);
+
+            saturation = sharedInvUsers.get(0).getSaturation();
         }
+
+        player.setHealth(health);
+        player.setFoodLevel(food);
+        player.setSaturation(saturation);
+        player.setExp(exp);
+        player.setLevel(expLevel);
 
         // sync this player with the shared inventory
         for (int slot = 0; slot < 41; slot++) {
@@ -289,12 +300,23 @@ public class WorldEvents implements Listener {
         if (Main.plugin.syncHealth) {
             SyncHealth();
         }
+
+        event.setJoinMessage(null);
+        Player newHost = sharedInvUsers.get(0);
+        Broadcast(true, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " joined. Syncing with " + ChatColor.DARK_AQUA + newHost.getName());
     }
 
     @EventHandler
     public void leave(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         sharedInvUsers.remove(player);
+
+        // if this player was using the shared inventory, pick a new host
+        if (sharedInvUsers.size() != 0) {
+            event.setQuitMessage(null);
+            Player newHost = sharedInvUsers.get(0);
+            Broadcast(true, ChatColor.DARK_AQUA + player.getName() + ChatColor.GRAY + " left. Syncing with " + ChatColor.DARK_AQUA + newHost.getName());
+        }
     }
 
     @EventHandler
@@ -393,7 +415,8 @@ public class WorldEvents implements Listener {
     @EventHandler
     public void consume(PlayerItemConsumeEvent  event) {
         Player player = event.getPlayer();
-        ItemStack item = event.getItem();
+        ItemStack item = event.getItem().clone();
+        item.setAmount(1);
         RemoveFromAllExcept(item, player);
     }
 
@@ -437,6 +460,16 @@ public class WorldEvents implements Listener {
         if (action == Action.LEFT_CLICK_BLOCK) return;
 
         Bukkit.getScheduler().runTask(Main.plugin, () -> SyncSlot(slot, player));
+    }
+
+    @EventHandler
+    public void save(WorldSaveEvent event) {
+        // TODO save inventory, health etc to file
+
+        // only listen to main world save event. we don't need to save inv 3 times
+        if (!event.getWorld().equals(Bukkit.getWorlds().get(0))) return;
+
+        Broadcast(true, ChatColor.GRAY + "World saved");
     }
 
     private void AddToAllExcept(ItemStack item, Player except) {
