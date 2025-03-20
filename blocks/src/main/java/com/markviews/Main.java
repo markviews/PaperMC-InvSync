@@ -19,7 +19,7 @@ public class Main extends JavaPlugin {
 
     public boolean log_health = true;
     public boolean log_food = true;
-    public boolean log_exp = true;
+    public boolean log_exp = false;
     public boolean log_potion = true;
     public boolean log_spawn = true;
 

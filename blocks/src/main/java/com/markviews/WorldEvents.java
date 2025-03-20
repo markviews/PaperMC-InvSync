@@ -1,12 +1,12 @@
 package com.markviews;
 
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.HashSet;
 import java.util.Objects;
 import org.bukkit.Bukkit;
 import org.bukkit.GameRule;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -50,19 +50,18 @@ import net.md_5.bungee.api.ChatColor;
 
 public class WorldEvents implements Listener {
 
-    private static Inventory sharedInv;
-
     // doing this instead of .GetOnlinePlayers() to prevent new joiners from overwriting shared inv with their own
     private ArrayList<Player> sharedInvUsers = new ArrayList<Player>();
 
     // dict to store tool durability when player starts using tool
-    private Map<Player, Short> toolDurability = new HashMap<>();
+    private HashSet<Player> usingTool = new HashSet<>();
 
+    // shared state
+    private Inventory sharedInv;
     private double health = 20;
     private int food = 20;
     private float exp = 0;
     private int expLevel = 0;
-
     private Location spawnLocation = null;
 
     public void Setup() {
@@ -75,7 +74,6 @@ public class WorldEvents implements Listener {
         }
 
         Main.plugin.protocolManager.addPacketListener(new PacketAdapter(Main.plugin, ListenerPriority.NORMAL, PacketType.Play.Client.BLOCK_DIG) {
-            @SuppressWarnings("deprecation")
             @Override
             public void onPacketReceiving(PacketEvent event) {
                 if (!Main.plugin.syncInventory) return;
@@ -93,11 +91,11 @@ public class WorldEvents implements Listener {
                 if (maxDurability == 0) return;
 
                 if (digType == EnumWrappers.PlayerDigType.START_DESTROY_BLOCK) {
-                    toolDurability.put(player, sharedItem.getDurability());
+                    usingTool.add(player);
                 } else if (digType == EnumWrappers.PlayerDigType.ABORT_DESTROY_BLOCK) {
-                    toolDurability.remove(player);
+                    usingTool.remove(player);
                 } else if (digType == EnumWrappers.PlayerDigType.STOP_DESTROY_BLOCK) {
-                    toolDurability.remove(player);
+                    usingTool.remove(player);
                 }
 
             }
@@ -459,7 +457,14 @@ public class WorldEvents implements Listener {
         Action action = event.getAction();
         if (action == Action.LEFT_CLICK_BLOCK) return;
 
-        Bukkit.getScheduler().runTask(Main.plugin, () -> SyncSlot(slot, player));
+        Bukkit.getScheduler().runTask(Main.plugin, () -> {
+            SyncSlot(slot, player);
+
+            // sync armor slots
+            for (int i = 36; i < 40; i++) {
+                SyncSlot(i, player);
+            }
+        });
     }
 
     @EventHandler
@@ -505,8 +510,12 @@ public class WorldEvents implements Listener {
             if (player.equals(from)) continue;
 
             // if this player is using the slot, don't update it
-            boolean isUsingTool = player.getInventory().getHeldItemSlot() == slot && toolDurability.containsKey(player);
-            if (isUsingTool) continue;
+            boolean isUsingTool = player.getInventory().getHeldItemSlot() == slot && usingTool.contains(player);
+            if (isUsingTool) {
+                // don't skip update if tool broke
+                boolean toolBroke = item.getType() == Material.AIR;
+                if (!toolBroke) continue;
+            }
 
             player.getInventory().setItem(slot, item);
         }
